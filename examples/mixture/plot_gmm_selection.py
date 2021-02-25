@@ -17,6 +17,7 @@ In that case, the model with 2 components and full covariance
 
 import numpy as np
 import itertools
+import pandas as pd
 
 from scipy import linalg
 import matplotlib.pyplot as plt
@@ -40,11 +41,11 @@ cv_types = ["spherical", "tied", "diag", "full"]
 
 gmIC = GaussianMixtureIC(min_components=1, max_components=6)
 gmIC.fit(X)
-results = gmIC.results_
+results = pd.DataFrame(gmIC.results_)
 
 color_iter = itertools.cycle(['navy', 'turquoise', 'cornflowerblue',
                               'darkorange'])
-clf = gmIC.model_
+clf = gmIC.best_model_
 bars = []
 
 # Plot the BIC scores
