@@ -124,7 +124,7 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
     max_iter : int, optional (default = 100).
         The maximum number of EM iterations to perform.
 
-    selection_criteria : str {"bic" or "aic"}, optional, (default="bic")
+    criterion : str {"bic" or "aic"}, optional, (default="bic")
         select the best model based on Bayesian Information Criterion (bic) or
         Aikake Information Criterion (aic)
 
@@ -168,7 +168,8 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
         'reg_covar' : float
             regularization used in GMM
 
-    criter_ : the best (lowest) Bayesian or Aikake Information Criterion
+    best_criterion_ : float
+        the best (lowest) Bayesian or Aikake Information Criterion
 
     n_components_ : int
         number of clusters in the model with the best bic/aic
@@ -185,8 +186,15 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
     reg_covar_ : float
         regularization used in the model with the best bic/aic
 
-    model_ : :class:`sklearn.mixture.GaussianMixture`
+    best_model_ : :class:`sklearn.mixture.GaussianMixture`
         object with the best bic/aic
+
+    labels_ : array-like, shape (n_samples,)
+        labels of each point predicted by the best model
+
+    n_iter_ : int
+        number of step used by the best fit of EM for the best model
+        to reach the convergence
 
     Examples
     --------
@@ -230,7 +238,7 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
         label_init=None,
         max_iter=100,
         verbose=0,
-        selection_criteria="bic",
+        criterion="bic",
         max_agglom_size=2000,
         n_jobs=None,
     ):
@@ -244,17 +252,15 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
         self.max_iter = max_iter
         self.label_init = label_init
         self.verbose = verbose
-        self.selection_criteria = selection_criteria
+        self.criterion = criterion
         self.max_agglom_size = max_agglom_size
         self.n_jobs = n_jobs
 
-    def _check_multi_comp_inputs(self, input, name, default):
+    def _check_multi_comp_inputs(self, input, name):
         if isinstance(input, (np.ndarray, list)):
             input = np.unique(input)
         elif isinstance(input, str):
-            if input == "all":
-                input = default
-            else:
+            if input != "all":
                 input = [input]
         else:
             msg = name + "must be a numpy array, a list, or "
@@ -278,16 +284,14 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
         )
 
         self.affinity = self._check_multi_comp_inputs(
-            self.affinity,
-            "affinity",
-            ["euclidean", "manhattan", "cosine", "none"],
+            self.affinity, "affinity"
         )
 
-        for aff in self.affinity:
-            if aff not in ["euclidean", "manhattan", "cosine", "none"]:
+        for aff in [self.affinity]:
+            if aff not in ["euclidean", "manhattan", "cosine", "none", "all"]:
                 msg = (
                     "affinity must be one of "
-                    + '["euclidean","manhattan","cosine","none"]'
+                    + '["euclidean", "manhattan", "cosine", "none", "all]'
                 )
                 msg += " not {}".format(aff)
                 raise ValueError(msg)
@@ -299,30 +303,26 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
             )
             raise ValueError(msg)
 
-        self.linkage = self._check_multi_comp_inputs(
-            self.linkage, "linkage", ["ward", "complete", "average", "single"]
-        )
+        self.linkage = self._check_multi_comp_inputs(self.linkage, "linkage")
 
-        for link in self.linkage:
-            if link not in ["ward", "complete", "average", "single"]:
+        for link in [self.linkage]:
+            if link not in ["ward", "complete", "average", "single", "all"]:
                 msg = (
                     "linkage must be one of "
-                    + '["ward", "complete", "average", "single"]'
+                    + '["ward", "complete", "average", "single", "all]'
                 )
                 msg += " not {}".format(link)
                 raise ValueError(msg)
 
         self.covariance_type = self._check_multi_comp_inputs(
-            self.covariance_type,
-            "covariance_type",
-            ["spherical", "diag", "tied", "full"],
+            self.covariance_type, "covariance_type"
         )
 
-        for cov in self.covariance_type:
-            if cov not in ["spherical", "diag", "tied", "full"]:
+        for cov in [self.covariance_type]:
+            if cov not in ["spherical", "diag", "tied", "full", "all"]:
                 msg = (
                     "covariance structure must be one of "
-                    + '["spherical", "diag", "tied", "full"]'
+                    + '["spherical", "diag", "tied", "full", "all]'
                 )
                 msg += " not {}".format(cov)
                 raise ValueError(msg)
@@ -354,9 +354,9 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
             labels_init = None
         self.label_init = labels_init
 
-        if self.selection_criteria not in ["aic", "bic"]:
-            msg = "selection_criteria must be one of " + '["aic, "bic"]'
-            msg += " not {}".format(self.selection_criteria)
+        if self.criterion not in ["aic", "bic"]:
+            msg = "criterion must be one of " + '["aic, "bic"]'
+            msg += " not {}".format(self.criterion)
             raise ValueError(msg)
 
         check_scalar(
@@ -416,7 +416,7 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
                 continue
             # if the code gets here, then the model has been fit with
             # no errors or singleton clusters
-            if self.selection_criteria == "bic":
+            if self.criterion == "bic":
                 criter = model.bic(X)
             else:
                 criter = model.aic(X)
@@ -466,13 +466,17 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
                 raise ValueError(msg)
 
         # check if X contains the 0 vector
-        if np.any(~X.any(axis=1)) and ("cosine" in self.affinity):
+        if np.any(~X.any(axis=1)) and (
+            "cosine" in self.affinity or self.affinity == "all"
+        ):
             if isinstance(self.affinity, np.ndarray):
                 self.affinity = np.delete(
                     self.affinity, np.argwhere(self.affinity == "cosine")
                 )
             if isinstance(self.affinity, list):
                 self.affinity.remove("cosine")
+            if self.affinity == "all":
+                self.affinity = ["euclidean", "manhattan", "none"]
             warnings.warn(
                 "X contains a zero vector, will not run cosine affinity."
             )
@@ -484,12 +488,25 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
                 raise ValueError(msg)
 
         param_grid = dict(
-            affinity=self.affinity,
-            linkage=self.linkage,
-            covariance_type=self.covariance_type,
             n_components=range(self.min_components, self.max_components + 1),
             random_state=[self.random_state],
         )
+        param_grid["affinity"] = (
+            self.affinity
+            if self.affinity != "all"
+            else ["euclidean", "manhattan", "cosine", "none"]
+        )
+        param_grid["linkage"] = (
+            self.linkage
+            if self.linkage != "all"
+            else ["ward", "complete", "average", "single"]
+        )
+        param_grid["covariance_type"] = (
+            self.covariance_type
+            if self.covariance_type != "all"
+            else ["spherical", "diag", "tied", "full"]
+        )
+
         param_grid = list(ParameterGrid(param_grid))
         param_grid_ag, param_grid = _process_paramgrid(param_grid)
 
@@ -533,13 +550,15 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
             [results[i]["bic/aic"] for i in range(len(results))]
         )
 
-        self.criter_ = results[best_idx]["bic/aic"]
+        self.best_criterion_ = results[best_idx]["bic/aic"]
         self.n_components_ = results[best_idx]["n_components"]
         self.covariance_type_ = results[best_idx]["covariance_type"]
         self.affinity_ = results[best_idx]["affinity"]
         self.linkage_ = results[best_idx]["linkage"]
         self.reg_covar_ = results[best_idx]["reg_covar"]
-        self.model_ = results[best_idx]["model"]
+        self.best_model_ = results[best_idx]["model"]
+        self.n_iter_ = results[best_idx]["model"].n_iter_
+        self.labels_ = results[best_idx]["model"].predict(X)
 
         results_dict = results[0].copy()
         for key in results_dict:
@@ -566,8 +585,8 @@ class GaussianMixtureIC(ClusterMixin, BaseEstimator):
         labels : array, shape (n_samples,)
             Component labels.
         """
-        check_is_fitted(self, ["model_"], all_or_any=all)
-        labels = self.model_.predict(X)
+        check_is_fitted(self, ["best_model_"], all_or_any=all)
+        labels = self.best_model_.predict(X)
 
         return labels
 
@@ -735,7 +754,12 @@ def _hierarchical_labels(children, min_components, max_components):
                 )
             )
 
-    hierarchical_labels = hierarchical_labels[:, merge_start:]
+    if n_samples == max_components:
+        hierarchical_labels = np.hstack(
+            (np.arange(max_components).reshape(-1, 1), hierarchical_labels)
+        )
+    else:
+        hierarchical_labels = hierarchical_labels[:, merge_start:]
     for i in range(hierarchical_labels.shape[1]):
         _, hierarchical_labels[:, i] = np.unique(
             hierarchical_labels[:, i], return_inverse=True

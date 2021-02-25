@@ -86,7 +86,7 @@ def test_input_param():
     _test_inputs(X, ValueError, **{"affinity": "manhattan", "linkage": "ward"})
 
     # criter = cic
-    _test_inputs(X, ValueError, selection_criteria="cic")
+    _test_inputs(X, ValueError, criterion="cic")
 
 
 def test_labels_init():
